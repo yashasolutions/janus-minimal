@@ -1,0 +1,184 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Janus Webinar - Watch (Subscriber)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 16px; }
+    video { width: 720px; max-width: 100%; background: #111; border-radius: 8px; }
+    .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+    button { padding: 8px 12px; }
+    pre { white-space: pre-wrap; background: #f6f6f6; padding: 12px; border-radius: 8px; }
+  </style>
+</head>
+<body>
+  <h1>Viewer (Subscriber)</h1>
+
+  <div class="row">
+    <button id="start">Start watching</button>
+    <button id="stop" disabled>Stop</button>
+    <label>Room:
+      <input id="room" type="number" value="1234" style="width:100px" />
+    </label>
+  </div>
+
+  <p>Remote stream:</p>
+  <video id="remote" autoplay playsinline></video>
+
+  <h3>Log</h3>
+  <pre id="log"></pre>
+
+  <script type="module">
+    import { Janus } from "https://esm.sh/janus-gateway@1.4.0";
+
+    const wsServer = "ws://localhost:8188";
+    const logEl = document.getElementById("log");
+    const remoteVideo = document.getElementById("remote");
+    const startBtn = document.getElementById("start");
+    const stopBtn = document.getElementById("stop");
+    const roomEl = document.getElementById("room");
+
+    let janus = null;
+    let pluginHandle = null;
+    let remoteStream = new MediaStream();
+    let polling = null;
+
+    function log(...args) {
+      logEl.textContent += args.map(a => (typeof a === "string" ? a : JSON.stringify(a, null, 2))).join(" ") + "\n";
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    function cleanup() {
+      if (polling) { clearInterval(polling); polling = null; }
+
+      try { if (pluginHandle) pluginHandle.hangup(); } catch {}
+      pluginHandle = null;
+
+      try { if (janus) janus.destroy(); } catch {}
+      janus = null;
+
+      remoteStream = new MediaStream();
+      remoteVideo.srcObject = null;
+
+      stopBtn.disabled = true;
+      startBtn.disabled = false;
+    }
+
+    function listParticipants(room) {
+      return new Promise((resolve, reject) => {
+        pluginHandle.send({
+          message: { request: "listparticipants", room },
+          success: (result) => resolve(result),
+          error: (err) => reject(err)
+        });
+      });
+    }
+
+    async function waitForPublisherAndJoin(room) {
+      log("Waiting for host publisher in room", room, "...");
+
+      // Poll listparticipants until we see someone (the host)
+      polling = setInterval(async () => {
+        try {
+          const res = await listParticipants(room);
+          const participants = res?.participants || [];
+          // Choose the first participant as the "host"
+          const host = participants[0];
+          if (!host) return;
+
+          clearInterval(polling);
+          polling = null;
+
+          const feedId = host.id;
+          log("Found host:", host);
+
+          pluginHandle.send({
+            message: { request: "join", room, ptype: "subscriber", feed: feedId }
+          });
+        } catch (e) {
+          // Common when the room doesn't exist yet.
+          log("listparticipants error (often ok while host not started):", e);
+        }
+      }, 800);
+    }
+
+    async function start() {
+      startBtn.disabled = true;
+      stopBtn.disabled = false;
+
+      const room = Number(roomEl.value) || 1234;
+
+      Janus.init({
+        debug: "all",
+        callback: async () => {
+          janus = new Janus({
+            server: wsServer,
+            success: () => {
+              log("Janus connected:", wsServer);
+
+              janus.attach({
+                plugin: "janus.plugin.videoroom",
+                success: async (handle) => {
+                  pluginHandle = handle;
+                  log("Attached to videoroom. Handle id:", pluginHandle.getId?.() ?? "(n/a)");
+
+                  await waitForPublisherAndJoin(room);
+                },
+                error: (err) => {
+                  log("Attach error:", err);
+                  cleanup();
+                },
+                onmessage: (msg, jsep) => {
+                  const event = msg?.videoroom;
+                  if (event) log("Event:", msg);
+
+                  if (jsep) {
+                    // Janus sends an offer; we answer.
+                    pluginHandle.createAnswer({
+                      jsep,
+                      media: { audioSend: false, videoSend: false, audioRecv: true, videoRecv: true },
+                      success: (jsepAnswer) => {
+                        pluginHandle.send({
+                          message: { request: "start" },
+                          jsep: jsepAnswer
+                        });
+                        log("Started watching.");
+                      },
+                      error: (err) => {
+                        log("createAnswer error:", err);
+                        cleanup();
+                      }
+                    });
+                  }
+                },
+                onremotetrack: (track, mid, on) => {
+                  if (!on) return;
+                  log("Remote track:", track.kind, "mid:", mid);
+
+                  remoteStream.addTrack(track);
+                  remoteVideo.srcObject = remoteStream;
+                },
+                webrtcState: (on) => log("WebRTC state:", on ? "up" : "down"),
+                oncleanup: () => log("Cleanup notification from Janus")
+              });
+            },
+            error: (err) => {
+              log("Janus error:", err);
+              cleanup();
+            },
+            destroyed: () => {
+              log("Janus destroyed");
+              cleanup();
+            }
+          });
+        }
+      });
+    }
+
+    startBtn.addEventListener("click", () => start().catch(e => { log("Start error:", e); cleanup(); }));
+    stopBtn.addEventListener("click", () => cleanup());
+    window.addEventListener("beforeunload", () => cleanup());
+  </script>
+</body>
+</html>
