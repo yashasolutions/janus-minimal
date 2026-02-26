@@ -29,33 +29,43 @@
   <h3>Log</h3>
   <pre id="log"></pre>
 
-  <script type="module">
-    import { Janus } from "https://esm.sh/janus-gateway@1.4.0";
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/webrtc-adapter/8.2.3/adapter.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/janus-gateway@1.2.4/janus.min.js"></script>
+  <script>
+    var wsServer = "ws://localhost:8188";
+    var logEl = document.getElementById("log");
+    var remoteVideo = document.getElementById("remote");
+    var startBtn = document.getElementById("start");
+    var stopBtn = document.getElementById("stop");
+    var roomEl = document.getElementById("room");
 
-    const wsServer = "ws://localhost:8188";
-    const logEl = document.getElementById("log");
-    const remoteVideo = document.getElementById("remote");
-    const startBtn = document.getElementById("start");
-    const stopBtn = document.getElementById("stop");
-    const roomEl = document.getElementById("room");
+    var janus = null;
+    var pluginHandle = null;
+    var remoteStream = new MediaStream();
+    var polling = null;
 
-    let janus = null;
-    let pluginHandle = null;
-    let remoteStream = new MediaStream();
-    let polling = null;
-
-    function log(...args) {
-      logEl.textContent += args.map(a => (typeof a === "string" ? a : JSON.stringify(a, null, 2))).join(" ") + "\n";
+    function log() {
+      var args = Array.prototype.slice.call(arguments);
+      logEl.textContent += args.map(function(a) {
+        return typeof a === "string" ? a : JSON.stringify(a, null, 2);
+      }).join(" ") + "\n";
       logEl.scrollTop = logEl.scrollHeight;
     }
 
     function cleanup() {
-      if (polling) { clearInterval(polling); polling = null; }
+      if (polling) {
+        clearInterval(polling);
+        polling = null;
+      }
 
-      try { if (pluginHandle) pluginHandle.hangup(); } catch {}
+      try {
+        if (pluginHandle) pluginHandle.hangup();
+      } catch (e) {}
       pluginHandle = null;
 
-      try { if (janus) janus.destroy(); } catch {}
+      try {
+        if (janus) janus.destroy();
+      } catch (e) {}
       janus = null;
 
       remoteStream = new MediaStream();
@@ -65,109 +75,113 @@
       startBtn.disabled = false;
     }
 
-    function listParticipants(room) {
-      return new Promise((resolve, reject) => {
-        pluginHandle.send({
-          message: { request: "listparticipants", room },
-          success: (result) => resolve(result),
-          error: (err) => reject(err)
-        });
+    function listParticipants(room, successCallback, errorCallback) {
+      pluginHandle.send({
+        message: { request: "listparticipants", room: room },
+        success: function(result) {
+          successCallback(result);
+        },
+        error: function(err) {
+          errorCallback(err);
+        }
       });
     }
 
-    async function waitForPublisherAndJoin(room) {
+    function waitForPublisherAndJoin(room) {
       log("Waiting for host publisher in room", room, "...");
 
-      // Poll listparticipants until we see someone (the host)
-      polling = setInterval(async () => {
-        try {
-          const res = await listParticipants(room);
-          const participants = res?.participants || [];
-          // Choose the first participant as the "host"
-          const host = participants[0];
+      polling = setInterval(function() {
+        listParticipants(room, function(res) {
+          var participants = res && res.participants ? res.participants : [];
+          var host = participants[0];
           if (!host) return;
 
           clearInterval(polling);
           polling = null;
 
-          const feedId = host.id;
+          var feedId = host.id;
           log("Found host:", host);
 
           pluginHandle.send({
-            message: { request: "join", room, ptype: "subscriber", feed: feedId }
+            message: { request: "join", room: room, ptype: "subscriber", feed: feedId }
           });
-        } catch (e) {
-          // Common when the room doesn't exist yet.
+        }, function(e) {
           log("listparticipants error (often ok while host not started):", e);
-        }
+        });
       }, 800);
     }
 
-    async function start() {
+    function start() {
       startBtn.disabled = true;
       stopBtn.disabled = false;
 
-      const room = Number(roomEl.value) || 1234;
+      var room = Number(roomEl.value) || 1234;
 
       Janus.init({
         debug: "all",
-        callback: async () => {
+        callback: function() {
           janus = new Janus({
             server: wsServer,
-            success: () => {
+            success: function() {
               log("Janus connected:", wsServer);
 
               janus.attach({
                 plugin: "janus.plugin.videoroom",
-                success: async (handle) => {
+                success: function(handle) {
                   pluginHandle = handle;
-                  log("Attached to videoroom. Handle id:", pluginHandle.getId?.() ?? "(n/a)");
+                  log("Attached to videoroom. Handle id:", pluginHandle.getId ? pluginHandle.getId() : "(n/a)");
 
-                  await waitForPublisherAndJoin(room);
+                  waitForPublisherAndJoin(room);
                 },
-                error: (err) => {
+                error: function(err) {
                   log("Attach error:", err);
                   cleanup();
                 },
-                onmessage: (msg, jsep) => {
-                  const event = msg?.videoroom;
+                onmessage: function(msg, jsep) {
+                  var event = msg ? msg.videoroom : null;
                   if (event) log("Event:", msg);
 
                   if (jsep) {
-                    // Janus sends an offer; we answer.
                     pluginHandle.createAnswer({
-                      jsep,
-                      media: { audioSend: false, videoSend: false, audioRecv: true, videoRecv: true },
-                      success: (jsepAnswer) => {
+                      jsep: jsep,
+                      tracks: [
+                        { type: "audio", capture: false, recv: true },
+                        { type: "video", capture: false, recv: true }
+                      ],
+                      success: function(jsepAnswer) {
                         pluginHandle.send({
                           message: { request: "start" },
                           jsep: jsepAnswer
                         });
                         log("Started watching.");
                       },
-                      error: (err) => {
+                      error: function(err) {
                         log("createAnswer error:", err);
                         cleanup();
                       }
                     });
                   }
                 },
-                onremotetrack: (track, mid, on) => {
+                onremotetrack: function(track, mid, on) {
                   if (!on) return;
                   log("Remote track:", track.kind, "mid:", mid);
 
                   remoteStream.addTrack(track);
                   remoteVideo.srcObject = remoteStream;
                 },
-                webrtcState: (on) => log("WebRTC state:", on ? "up" : "down"),
-                oncleanup: () => log("Cleanup notification from Janus")
+                webrtcState: function(on) {
+                  log("WebRTC state:", on ? "up" : "down");
+                },
+                oncleanup: function() {
+                  log("Cleanup notification from Janus");
+                }
               });
             },
-            error: (err) => {
+            error: function(err) {
               log("Janus error:", err);
               cleanup();
             },
-            destroyed: () => {
+            destroyed: function() {
               log("Janus destroyed");
               cleanup();
             }
@@ -176,9 +190,16 @@
       });
     }
 
-    startBtn.addEventListener("click", () => start().catch(e => { log("Start error:", e); cleanup(); }));
-    stopBtn.addEventListener("click", () => cleanup());
-    window.addEventListener("beforeunload", () => cleanup());
+    startBtn.addEventListener("click", function() {
+      try {
+        start();
+      } catch (e) {
+        log("Start error:", e);
+        cleanup();
+      }
+    });
+    stopBtn.addEventListener("click", function() { cleanup(); });
+    window.addEventListener("beforeunload", function() { cleanup(); });
   </script>
 </body>
 </html>
