@@ -28,9 +28,11 @@
 
   <h3>Log</h3>
   <pre id="log"></pre>
-<script type="module">
-  import janusGatewayJs from 'https://cdn.jsdelivr.net/npm/janus-gateway-js@2.0.2/+esm'
-    const wsServer = "ws://localhost:8188"; // Janus websockets transport
+
+  <script src="https://cdn.jsdelivr.net/npm/webrtc-adapter@8.2.3/out/adapter.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/janus-gateway@1.2.2/npm/janus.js"></script>
+  <script>
+    const wsServer = "ws://localhost:8188";
     const logEl = document.getElementById("log");
     const localVideo = document.getElementById("local");
     const startBtn = document.getElementById("start");
@@ -41,15 +43,6 @@
     let pluginHandle = null;
     let localStream = null;
     let myId = null;
-
-    startBtn.addEventListener("click", () => start().catch(e => {
-      log("Start error (raw):", String(e));
-      log("Start error name:", e?.name);
-      log("Start error message:", e?.message);
-      log("Start error stack:", e?.stack);
-      console.error(e);
-      cleanup();
-    }));
 
     function log(...args) {
       logEl.textContent += args.map(a => (typeof a === "string" ? a : JSON.stringify(a, null, 2))).join(" ") + "\n";
@@ -72,23 +65,20 @@
       startBtn.disabled = false;
     }
 
-    async function ensureRoom(room) {
-      // Create the room if it doesn't exist; ignore "already exists".
+    function ensureRoom(room) {
       return new Promise((resolve) => {
         pluginHandle.send({
           message: {
             request: "create",
             room,
             description: "webinar",
-            publishers: 1,
-            // optional: bitrate cap, e.g. bitrate: 1_000_000
+            publishers: 1
           },
           success: (result) => {
             log("Room create result:", result);
             resolve(true);
           },
           error: (err) => {
-            // Janus may report "already exists" here; that's fine.
             log("Room create error (often ok):", err);
             resolve(false);
           }
@@ -104,21 +94,20 @@
 
       Janus.init({
         debug: "all",
-        callback: async () => {
+        callback: () => {
           janus = new Janus({
             server: wsServer,
-            success: async () => {
+            success: () => {
               log("Janus connected:", wsServer);
 
               janus.attach({
                 plugin: "janus.plugin.videoroom",
                 success: async (handle) => {
                   pluginHandle = handle;
-                  log("Attached to videoroom. Handle id:", pluginHandle.getId?.() ?? "(n/a)");
+                  log("Attached to videoroom. Handle id:", pluginHandle.getId());
 
                   await ensureRoom(room);
 
-                  // Join as publisher
                   pluginHandle.send({
                     message: { request: "join", room, ptype: "publisher", display: "HOST" }
                   });
@@ -135,13 +124,14 @@
                     myId = msg.id;
                     log("Joined as publisher. My publisher id:", myId);
 
-                    // Get camera+mic and publish
                     localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
                     localVideo.srcObject = localStream;
 
                     pluginHandle.createOffer({
-                      stream: localStream,
-                      media: { audioRecv: false, videoRecv: false, audioSend: true, videoSend: true },
+                      tracks: [
+                        { type: "audio", capture: true, recv: false },
+                        { type: "video", capture: true, recv: false }
+                      ],
                       success: (jsepOffer) => {
                         pluginHandle.send({
                           message: { request: "configure", audio: true, video: true },
@@ -162,7 +152,7 @@
                 },
                 webrtcState: (on) => log("WebRTC state:", on ? "up" : "down"),
                 onlocaltrack: (track, on) => {
-                  // We already set localStream to video element; nothing else needed.
+                  log("Local track:", track.kind, on ? "added" : "removed");
                 },
                 oncleanup: () => log("Cleanup notification from Janus")
               });
@@ -180,7 +170,14 @@
       });
     }
 
-    startBtn.addEventListener("click", () => start().catch(e => { log("Start error:", e); cleanup(); }));
+    startBtn.addEventListener("click", () => start().catch(e => {
+      log("Start error (raw):", String(e));
+      log("Start error name:", e?.name);
+      log("Start error message:", e?.message);
+      log("Start error stack:", e?.stack);
+      console.error(e);
+      cleanup();
+    }));
     stopBtn.addEventListener("click", () => cleanup());
     window.addEventListener("beforeunload", () => cleanup());
   </script>
