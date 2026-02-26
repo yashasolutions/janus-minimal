@@ -1,0 +1,14 @@
+general: {
+    json = "indented"
+    ws = true
+    ws_port = 8188
+    ws_logging = "err,warn"
+}
+
+admin: {
+    admin_ws = false
+}
+
+cors: {
+    allow_origin = "*"
+}

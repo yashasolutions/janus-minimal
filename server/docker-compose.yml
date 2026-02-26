@@ -11,4 +11,7 @@ services:
       - "8989:8989"
       - "10000-10200:10000-10200/udp"
     environment:
-      - JANUS_LOG_LEVEL=4
+      - JANUS_LOG_LEVEL=7
+    volumes:
+      - ./janus.transport.websockets.jcfg:/etc/janus/janus.transport.websockets.jcfg:ro
+      - ./janus.plugin.videoroom.jcfg:/etc/janus/janus.plugin.videoroom.jcfg:ro

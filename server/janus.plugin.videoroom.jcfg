@@ -1,0 +1,18 @@
+general: {
+    admin_key = "supersecret"
+    events = true
+}
+
+room-1234: {
+    description = "Default Webinar Room"
+    is_private = false
+    secret = "adminpwd"
+    pin = ""
+    require_pvtid = false
+    publishers = 6
+    bitrate = 128000
+    fir_freq = 10
+    audiocodec = "opus"
+    videocodec = "vp8"
+    record = false
+}
