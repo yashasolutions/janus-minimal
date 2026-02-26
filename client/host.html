@@ -28,9 +28,8 @@
 
   <h3>Log</h3>
   <pre id="log"></pre>
-
-  <script src="https://cdn.jsdelivr.net/npm/janus-gateway@1.4.0/dist/janus.js"></script>
-<script>
+<script type="module">
+  import janusGatewayJs from 'https://cdn.jsdelivr.net/npm/janus-gateway-js@2.0.2/+esm'
     const wsServer = "ws://localhost:8188"; // Janus websockets transport
     const logEl = document.getElementById("log");
     const localVideo = document.getElementById("local");
@@ -42,6 +41,15 @@
     let pluginHandle = null;
     let localStream = null;
     let myId = null;
+
+    startBtn.addEventListener("click", () => start().catch(e => {
+      log("Start error (raw):", String(e));
+      log("Start error name:", e?.name);
+      log("Start error message:", e?.message);
+      log("Start error stack:", e?.stack);
+      console.error(e);
+      cleanup();
+    }));
 
     function log(...args) {
       logEl.textContent += args.map(a => (typeof a === "string" ? a : JSON.stringify(a, null, 2))).join(" ") + "\n";
