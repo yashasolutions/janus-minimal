@@ -29,9 +29,9 @@
   <h3>Log</h3>
   <pre id="log"></pre>
 
-  <script src="https://cdn.jsdelivr.net/npm/webrtc-adapter@8.2.3/out/adapter.min.js"></script>
-  <script src="https://raw.githack.com/meetecho/janus-gateway/master/html/janus.js"></script>
-  <script>
+  <script type="module">
+    import { Janus } from "https://esm.sh/janus-gateway@1.4.0";
+
     const wsServer = "ws://localhost:8188";
     const logEl = document.getElementById("log");
     const localVideo = document.getElementById("local");
